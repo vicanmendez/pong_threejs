@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="es">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Tutorial Pong 3D/VR con Three.js</title>
+	<style>
+		:root {
+			--bg: #0b0e12;
+			--panel: #0f1720;
+			--text: #e6edf3;
+			--muted: #9aa4af;
+			--accent: #60a5fa;
+			--border: #1f2a37;
+		}
+		html, body { height: 100%; margin: 0; }
+		body {
+			font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+			background: radial-gradient(1000px 600px at 80% -10%, #142133 0%, var(--bg) 60%);
+			color: var(--text);
+		}
+		.container {
+			max-width: 980px;
+			margin: 0 auto;
+			padding: 28px 20px 64px;
+		}
+		header {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 12px;
+			margin-bottom: 16px;
+		}
+		header h1 {
+			font-size: 26px;
+			margin: 0;
+			font-weight: 700;
+		}
+		.actions a {
+			display: inline-block;
+			padding: 10px 14px;
+			border: 1px solid var(--border);
+			border-radius: 8px;
+			color: var(--text);
+			text-decoration: none;
+			background: linear-gradient(180deg, #111827 0%, #0f1720 100%);
+		}
+		.actions a:hover { border-color: #2b3a4d; }
+		.panel {
+			background: linear-gradient(180deg, #0f1720 0%, #0c121a 100%);
+			border: 1px solid var(--border);
+			border-radius: 12px;
+			padding: 18px 18px;
+			margin: 16px 0;
+		}
+		h2 {
+			font-size: 20px; margin: 14px 0 8px 0;
+		}
+		code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+		code { background: #0e1622; border: 1px solid var(--border); padding: 2px 6px; border-radius: 6px; }
+		pre {
+			background: #0e1622; border: 1px solid var(--border);
+			padding: 12px 14px; border-radius: 8px; overflow: auto;
+		}
+		ul { margin: 8px 0 10px 22px; }
+		li { margin: 6px 0; }
+		.kv { color: var(--muted); }
+		.hr { height: 1px; background: var(--border); margin: 18px 0; }
+	</style>
+</head>
+<body>
+	<div class="container">
+		<header>
+			<h1>Pong 3D/VR con Three.js — Tutorial del código</h1>
+			<div class="actions">
+				<a href="./index.html">Volver al juego</a>
+			</div>
+		</header>
+
+		<div class="panel">
+			<p>Este documento explica, paso a paso, cómo está organizado el proyecto y qué hace cada sección del archivo <code>src/main.js</code>. Es una prueba de concepto con:</p>
+			<ul>
+				<li>Modelos 3D de baja fidelidad (mesa, raquetas, pelota, marcador).</li>
+				<li>Controles por teclado y mouse, IA básica para la CPU.</li>
+				<li>Soporte WebXR (VR) con objetos agarrables.</li>
+			</ul>
+		</div>
+
+		<h2>1) Escena, cámara y renderer</h2>
+		<div class="panel">
+			<p>Se crea una escena, una cámara en perspectiva y un renderer WebGL con sombras y WebXR.</p>
+			<pre>
+// Escena y cámara
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(62, aspect, 0.01, 200);
+
+// Renderer con WebXR
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.xr.enabled = true;
+			</pre>
+			<ul>
+				<li><span class="kv">FOV</span>: cambia el primer valor de <code>PerspectiveCamera(62,...)</code>.</li>
+				<li><span class="kv">Sombras/calidad</span>: ajusta <code>renderer.setPixelRatio</code> y <code>dir.shadow.mapSize</code>.</li>
+			</ul>
+		</div>
+
+		<h2>2) Suelo y mesa</h2>
+		<div class="panel">
+			<p>La mesa se arma con cajas (tapa/patas), líneas finas blancas y una red simple transparente.</p>
+			<ul>
+				<li><span class="kv">Dimensiones</span>: ~2.74 x 1.525 m, altura ~0.76 m.</li>
+				<li><span class="kv">Color/Material</span>: en los materiales de la mesa.</li>
+			</ul>
+		</div>
+
+		<h2>3) Raquetas (paddles) con forma</h2>
+		<div class="panel">
+			<p>Cada raqueta es un grupo con:</p>
+			<ul>
+				<li>Blade circular delgado (<code>CylinderGeometry</code>) vertical.</li>
+				<li>Mango (<code>BoxGeometry</code>) detrás del blade.</li>
+				<li>Se guarda <code>bladeRadius</code> para colisiones.</li>
+			</ul>
+			<pre>
+function createPaddle(color) {
+    const bladeRadius = 0.10;
+    const blade = new THREE.Mesh(new THREE.CylinderGeometry(bladeRadius, bladeRadius, 0.02, 32), mat);
+    blade.rotation.z = Math.PI / 2; // vertical
+    const handle = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.018, 0.12), handleMat);
+    // ...
+}
+			</pre>
+		</div>
+
+		<h2>4) Pelota y física (arcade)</h2>
+		<div class="panel">
+			<p>La pelota se mueve en el plano XZ y su altura Y se fija al plano de las raquetas para asegurar colisiones y agarre en VR.</p>
+			<ul>
+				<li><span class="kv">Rebotes en Z</span> (bordes de la mesa).</li>
+				<li><span class="kv">Colisión con raquetas</span>: invierte X, añade spin y respeta velocidad máxima.</li>
+			</ul>
+			<pre>
+// Altura fija y avance
+ball.position.y = paddleY;
+state.ballVelocity.y = 0;
+ball.position.addScaledVector(state.ballVelocity, dt);
+			</pre>
+		</div>
+
+		<h2>5) Marcador (CanvasTexture)</h2>
+		<div class="panel">
+			<p>Un canvas 2D genera la textura con el score y se asigna a un plano. Se ubica al fondo y siempre se orienta hacia la cámara.</p>
+			<pre>
+const { texture, update } = createScoreTexture();
+const scorePlane = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.8), new THREE.MeshBasicMaterial({ map: texture }));
+scorePlane.lookAt(camera.position);
+			</pre>
+		</div>
+
+		<h2>6) Controles: mouse, teclado y pausa</h2>
+		<div class="panel">
+			<ul>
+				<li><b>Mouse</b>: controla el eje Z del paddle del jugador con damping fuerte y feed-forward.</li>
+				<li><b>Teclado</b>: W/ArrowUp/A = arriba, S/ArrowDown/D = abajo.</li>
+				<li><b>Pausa</b>: Enter.</li>
+				<li><b>Clic</b>: bloquea/desbloquea la rotación (paddle erguido).</li>
+			</ul>
+			<pre>
+// Damping y feed-forward
+playerPaddle.position.z = THREE.MathUtils.damp(playerPaddle.position.z, targetZ, 80.0, dt);
+targetZ += input.mouseYVel * (tableSize.height * 2.6);
+			</pre>
+		</div>
+
+		<h2>7) IA del CPU</h2>
+		<div class="panel">
+			<p>Predice la llegada de la pelota y mueve su paddle con velocidad máxima limitada. Se añade una rotación sutil basada en el movimiento.</p>
+			<pre>
+const move = clamp(delta, -state.cpuMaxSpeed * dt, state.cpuMaxSpeed * dt);
+cpuPaddle.position.z += move;
+cpuPaddle.rotation.y = THREE.MathUtils.clamp(-dz * 0.6, -0.35, 0.35);
+			</pre>
+		</div>
+
+		<h2>8) VR y objetos agarrables</h2>
+		<div class="panel">
+			<p>Se habilita WebXR con <code>VRButton</code>. Se usan raycasters desde los controladores para “tomar” raquetas/pelota. Al agarrar la pelota, su velocidad se pone a 0.</p>
+			<pre>
+controller.addEventListener('selectstart', onSelectStart);
+// ...
+newMatrix.decompose(object.position, object.quaternion, object.scale);
+			</pre>
+		</div>
+
+		<h2>9) Bucle de animación</h2>
+		<div class="panel">
+			<p>En cada frame se actualizan agarres, jugador, CPU, pelota, cámara y marcador; luego se renderiza.</p>
+			<pre>
+renderer.setAnimationLoop(() => {
+    updateGrabs();
+    if (state.running) { updatePlayer(dt); updateCPU(dt); updateBall(dt); }
+    updateCameraFP(dt);
+    scorePlane.lookAt(camera.position);
+    renderer.render(scene, camera);
+});
+			</pre>
+		</div>
+
+		<h2>10) Zoom y cámara</h2>
+		<div class="panel">
+			<p>El zoom se controla con la rueda del mouse y teclas +/- ajustando <code>state.cameraBack</code>, que se interpola en <code>updateCameraFP</code> para alejar la cámara.</p>
+			<pre>
+window.addEventListener('wheel', (e) => {
+    state.cameraBack = clamp(state.cameraBack + Math.sign(e.deltaY) * 0.08, 0.4, 2.0);
+});
+
+// En updateCameraFP
+const back = THREE.MathUtils.lerp(0.35, 1.4, state.cameraBack);
+camera.position.x = playerPaddle.position.x - back;
+			</pre>
+		</div>
+
+		<div class="hr"></div>
+		<div class="panel">
+			<h2>¿Qué puedo ajustar rápidamente?</h2>
+			<ul>
+				<li><b>Respuesta del paddle</b>: damping (80.0) y feed-forward en <code>updatePlayer</code>.</li>
+				<li><b>Dificultad CPU</b>: <code>state.cpuMaxSpeed</code>.</li>
+				<li><b>Pelota</b>: <code>state.maxBallSpeed</code> y spin en colisión.</li>
+				<li><b>Zoom</b>: rango de <code>state.cameraBack</code> y FOV de la cámara.</li>
+				<li><b>Marcador</b>: posición del <code>scorePlane</code> y fuente del canvas.</li>
+			</ul>
+		</div>
+
+	</div>
+</body>
+</html>
+
+
