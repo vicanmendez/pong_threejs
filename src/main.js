@@ -128,7 +128,8 @@ const cpuPaddle = createPaddle(0x16a34a);
 
 // Position paddles along X axis near ends of table
 const paddleY = tableTop.position.y + 0.06;
-playerPaddle.position.set(-tableSize.width/2 + 0.25, paddleY, 0);
+// Mover la raqueta del jugador más atrás hacia la frontera de la mesa
+playerPaddle.position.set(-tableSize.width/2 - 0.15, paddleY, 0);
 cpuPaddle.position.set(tableSize.width/2 - 0.25, paddleY, 0);
 world.add(playerPaddle, cpuPaddle);
 
@@ -171,7 +172,8 @@ const scorePlane = new THREE.Mesh(
     new THREE.MeshBasicMaterial({ map: scoreCanvas.texture, transparent: true })
 );
 // place the scoreboard at the far end (CPU side) above the table center line
-scorePlane.position.set(tableSize.width/2 + 0.5, tableTop.position.y + 0.9, 0);
+// Ajustar posición para mejor visibilidad en VR
+scorePlane.position.set(tableSize.width/2 + 0.3, tableTop.position.y + 1.2, 0);
 // make scoreboard face camera each frame
 world.add(scorePlane);
 
@@ -405,8 +407,8 @@ function checkGameOver() {
     }
 }
 
-// Input handling (keyboard + mouse)
-const input = { up: false, down: false, left: false, right: false, mouseY: null, mouseYVel: 0, rotationLocked: false };
+// Input handling (keyboard + mouse + touch)
+const input = { up: false, down: false, left: false, right: false, mouseY: null, mouseYVel: 0, rotationLocked: false, touchTarget: null };
 
 function isAnyModalOpen() {
     return !!document.querySelector('.modal:not(.hidden)');
@@ -435,6 +437,46 @@ window.addEventListener('mousemove', (e) => {
 window.addEventListener('click', (e) => {
     if (isAnyModalOpen()) return; // Ignorar clics mientras el modal esté abierto
     input.rotationLocked = !input.rotationLocked;
+});
+
+// Touch controls for mobile
+window.addEventListener('touchstart', (e) => {
+    if (isAnyModalOpen()) return;
+    e.preventDefault();
+    
+    const touch = e.touches[0];
+    const rect = renderer.domElement.getBoundingClientRect();
+    const x = (touch.clientX - rect.left) / rect.width;
+    const y = (touch.clientY - rect.top) / rect.height;
+    
+    // Convertir coordenadas de pantalla a posición de la mesa
+    // X: 0-1 -> posición Z en la mesa (-1.5 a 1.5)
+    const targetZ = (x - 0.5) * 3.0; // Mapear 0-1 a -1.5 a 1.5
+    // Y: 0-1 -> posición Y de la raqueta (0.5 a 1.5)
+    const targetY = 0.5 + (1 - y) * 1.0; // Invertir Y para que arriba sea arriba
+    
+    input.touchTarget = { z: targetZ, y: targetY };
+}, { passive: false });
+
+window.addEventListener('touchmove', (e) => {
+    if (isAnyModalOpen() || !input.touchTarget) return;
+    e.preventDefault();
+    
+    const touch = e.touches[0];
+    const rect = renderer.domElement.getBoundingClientRect();
+    const x = (touch.clientX - rect.left) / rect.width;
+    const y = (touch.clientY - rect.top) / rect.height;
+    
+    const targetZ = (x - 0.5) * 3.0;
+    const targetY = 0.5 + (1 - y) * 1.0;
+    
+    input.touchTarget = { z: targetZ, y: targetY };
+}, { passive: false });
+
+window.addEventListener('touchend', (e) => {
+    if (isAnyModalOpen()) return;
+    e.preventDefault();
+    input.touchTarget = null;
 });
 // zoom controls: mouse wheel and +/- keys
 window.addEventListener('wheel', (e) => {
@@ -498,27 +540,16 @@ controller2.addEventListener('selectend', onSelectEnd);
 
 // VR session lifecycle: calibrate paddle mapping to controller movement
 renderer.xr.addEventListener('sessionstart', () => {
-    const ref = controllerGrip1 || controller1 || controllerGrip2 || controller2;
+    const ref = controller1 || controllerGrip1 || controller2 || controllerGrip2;
     if (ref) {
         vrControl.active = true;
         vrControl.originX = ref.position.x;
         vrControl.originZ = playerPaddle.position.z;
-        vrControl.originY = ref.position.y; // Calibrar altura de referencia
+        vrControl.originY = ref.position.y;
     }
+    // No mover ni rotar el mundo en inmersivo
+});
 
-    // Colocar al usuario detrás del paddle del jugador mirando la mesa
-    // Rotar el mundo -90° en Y para que el eje +X de la mesa apunte al -Z de la cámara
-    world.rotation.set(0, -Math.PI / 2, 0);
-    const zAfterRot = -playerPaddle.position.x; // x original pasa a -z tras rotación -90°
-    const desiredDistance = 1.2; // metros delante del usuario
-    world.position.set(0, 0, -desiredDistance - zAfterRot);
-});
-renderer.xr.addEventListener('sessionend', () => {
-    vrControl.active = false;
-    // Resetear transformaciones del mundo al salir de VR
-    world.position.set(0, 0, 0);
-    world.rotation.set(0, 0, 0);
-});
 
 // Resize
 window.addEventListener('resize', onWindowResize);
@@ -585,22 +616,28 @@ function updatePlayer(dt) {
     
     const usingKeys = input.up || input.down || input.left || input.right;
     
-    if (!usingKeys && input.mouseY !== null) {
-        // invert direction to feel natural (arriba del mouse -> arriba del paddle)
+    // Prioridad: Touch > Mouse > Keyboard
+    if (input.touchTarget) {
+        // Control táctil para móvil
+        targetZ = clamp(input.touchTarget.z, bounds.zMin + 0.12, bounds.zMax - 0.12);
+        targetY = clamp(input.touchTarget.y, 0.5, 1.5);
+    } else if (!usingKeys && input.mouseY !== null) {
+        // Control con mouse
         const t = ((1 - input.mouseY) * 2 - 1); // -1..1
         targetZ = clamp(t * (tableSize.height/2 - 0.12), bounds.zMin + 0.12, bounds.zMax - 0.12);
         // feed-forward from mouse velocity for extra responsiveness (same sign as t)
         const feedForward = input.mouseYVel * (tableSize.height * 2.6);
         targetZ = clamp(targetZ + feedForward, bounds.zMin + 0.12, bounds.zMax - 0.12);
+    } else if (usingKeys) {
+        // Control con teclado
+        // Movimiento horizontal (A/D o flechas izquierda/derecha)
+        if (input.left) targetZ -= state.paddleSpeed * dt;
+        if (input.right) targetZ += state.paddleSpeed * dt;
+        
+        // Movimiento vertical (W/S o flechas arriba/abajo)
+        if (input.up) targetY += state.paddleSpeed * dt;
+        if (input.down) targetY -= state.paddleSpeed * dt;
     }
-    
-    // Movimiento horizontal (A/D o flechas izquierda/derecha)
-    if (input.left) targetZ -= state.paddleSpeed * dt;
-    if (input.right) targetZ += state.paddleSpeed * dt;
-    
-    // Movimiento vertical (W/S o flechas arriba/abajo)
-    if (input.up) targetY += state.paddleSpeed * dt;
-    if (input.down) targetY -= state.paddleSpeed * dt;
     
     // Aplicar movimiento suave con damping
     const prevZ = playerPaddle.position.z;
@@ -717,25 +754,33 @@ function updateBall(dt) {
 // Camera: first-person viewpoint slightly behind player's paddle
 function updateCameraFP(dt) {
     const isVR = renderer.xr.isPresenting;
-    if (isVR) {
-        // En VR, posicionar la cámara detrás de la mesa de juego
-        const back = 1.5; // Distancia detrás de la mesa
-        const height = 1.2; // Altura de la cámara
-        const desired = new THREE.Vector3(0, height, -tableSize.height/2 - back);
+    const session = renderer.xr.getSession ? renderer.xr.getSession() : null;
+    const isImmersive = session && session.mode === 'immersive-vr';
+
+    if (isVR && !isImmersive) {
+        // Vista previa VR (no inmersiva, en navegador)
+        const desired = new THREE.Vector3(-3.5, 1.3, 0.4);
         camera.position.lerp(desired, clamp(10 * dt, 0, 1));
-        // Mirar hacia el centro de la mesa
-        const lookAtTarget = new THREE.Vector3(0, tableTop.position.y + 0.05, 0);
+        const lookAtTarget = new THREE.Vector3(0, tableTop.position.y + 0.1, 0);
         camera.lookAt(lookAtTarget);
+
+        // Reposicionar marcador delante del jugador
+        scorePlane.position.set(-2.0, tableTop.position.y + 1.2, 0);
+    } else if (isImmersive) {
+        // En VR inmersivo el headset controla la cámara
+        // NO tocar camera.position ni camera.lookAt
+        // Solo aseguramos marcador visible relativo a la mesa
+        scorePlane.position.set(-2.0, tableTop.position.y + 1.2, 0);
     } else {
-        // Modo normal (no VR)
+        // Vista normal (desktop/móvil)
         const back = THREE.MathUtils.lerp(0.35, 1.4, state.cameraBack);
         const desired = new THREE.Vector3(playerPaddle.position.x - back, 1.1, playerPaddle.position.z);
         camera.position.lerp(desired, clamp(10 * dt, 0, 1));
-        const lookAtTarget = new THREE.Vector3(0, tableTop.position.y + 0.05, 0);
-        lookAtTarget.z = playerPaddle.position.z * 0.6;
+        const lookAtTarget = new THREE.Vector3(0, tableTop.position.y + 0.05, playerPaddle.position.z * 0.6);
         camera.lookAt(lookAtTarget);
     }
 }
+
 
 // Update grabbed objects to follow controller
 function updateGrabs() {
@@ -758,6 +803,10 @@ function updateGrabs() {
 // VR controls: map hand movement to paddle position (both horizontal and vertical)
 function updateVRControls(dt) {
     if (!renderer.xr.isPresenting || !vrControl.active) return;
+    
+    // Solo aplicar controles VR en modo inmersivo
+    const isImmersive = renderer.xr.getSession && renderer.xr.getSession() && renderer.xr.getSession().mode === 'immersive-vr';
+    if (!isImmersive) return;
     const ref = controllerGrip1 || controller1 || controllerGrip2 || controller2;
     if (!ref) return;
     
@@ -811,12 +860,16 @@ renderer.setAnimationLoop(() => {
     updateGrabs();
 
     if (state.running && !state.gameOver) {
-        updatePlayer(dt);
+        // VR control overrides player mouse/keyboard when in VR inmersivo
+        const isImmersive = renderer.xr.isPresenting && renderer.xr.getSession && renderer.xr.getSession() && renderer.xr.getSession().mode === 'immersive-vr';
+        if (isImmersive) {
+            updateVRControls(dt);
+        } else {
+            updatePlayer(dt);
+        }
         updateCPU(dt);
         updateBall(dt);
     }
-    // VR control overrides player mouse/keyboard when in VR
-    updateVRControls(dt);
     updateCameraFP(dt);
     // billboard score to camera
     scorePlane.lookAt(camera.position);

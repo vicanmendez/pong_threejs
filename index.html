@@ -162,11 +162,12 @@
 <body>
     <div id="overlay">
         <div class="row"><strong>Controles:</strong></div>
-        <div class="row">Teclado: W/S (arriba/abajo), A/D (izquierda/derecha)</div>
-        <div class="row">Flechas: ↑/↓ (arriba/abajo), ←/→ (izquierda/derecha)</div>
-        <div class="row">Mouse: mover verticalmente</div>
+        <div class="row desktop-controls">Teclado: W/S (arriba/abajo), A/D (izquierda/derecha)</div>
+        <div class="row desktop-controls">Flechas: ↑/↓ (arriba/abajo), ←/→ (izquierda/derecha)</div>
+        <div class="row desktop-controls">Mouse: mover verticalmente</div>
+        <div class="row mobile-controls" style="display: none;">Toca la pantalla para mover la raqueta</div>
         <div class="row">VR: usa el botón VR, los objetos son agarrables</div>
-        <div class="row">Click: pausar/reanudar</div>
+        <div class="row desktop-controls">Click: pausar/reanudar</div>
     </div>
     
     <!-- Modal para configurar límite de puntos -->
@@ -205,6 +206,25 @@
             "three/addons/": "https://unpkg.com/three@0.161.0/examples/jsm/"
         }
     }
+    </script>
+    <script>
+        // Detectar dispositivos móviles y ajustar instrucciones
+        function isMobileDevice() {
+            return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
+                   ('ontouchstart' in window) || 
+                   (navigator.maxTouchPoints > 0);
+        }
+        
+        // Aplicar cambios cuando el DOM esté listo
+        document.addEventListener('DOMContentLoaded', function() {
+            if (isMobileDevice()) {
+                // Ocultar controles de escritorio y mostrar controles móviles
+                document.querySelectorAll('.desktop-controls').forEach(el => {
+                    el.style.display = 'none';
+                });
+                document.querySelector('.mobile-controls').style.display = 'block';
+            }
+        });
     </script>
     <script type="module" src="./src/main.js"></script>
 </body>
