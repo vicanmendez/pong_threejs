@@ -547,7 +547,34 @@ renderer.xr.addEventListener('sessionstart', () => {
         vrControl.originZ = playerPaddle.position.z;
         vrControl.originY = ref.position.y;
     }
-    // No mover ni rotar el mundo en inmersivo
+    
+    // Calibrar la escena para que el usuario quede detrás de su paleta (roja)
+    // 1) Girar el mundo para alinear el eje X de la mesa con la dirección de mirada (-Z de la cámara)
+    const rotY = -Math.PI / 2; // mantiene el lado del jugador al frente
+    world.rotation.set(0, rotY, 0);
+    // 2) Colocar el mundo de manera que la paleta del jugador quede centrada y a ~0.7m por delante
+    const yAxis = new THREE.Vector3(0, 1, 0);
+    const playerPosRotated = playerPaddle.position.clone().applyAxisAngle(yAxis, rotY);
+    // Colocar la paleta ligeramente delante (~0.35m) para poder agarrarla cómodamente
+    const desiredZ = -0.35; // distancia cómoda delante del usuario
+    // traslación necesaria para llevar playerPosRotated a (x=0, z=desiredZ)
+    world.position.set(-playerPosRotated.x, 0, desiredZ - playerPosRotated.z);
+
+    // Mostrar controles VR cuando se inicia la sesión
+    if (window.showVRControls) {
+        window.showVRControls();
+    }
+});
+
+// VR session lifecycle: restaurar controles normales al salir
+renderer.xr.addEventListener('sessionend', () => {
+    // Ocultar controles VR cuando se termina la sesión
+    if (window.hideVRControls) {
+        window.hideVRControls();
+    }
+    // Restaurar orientación y posición del mundo al salir de VR
+    world.rotation.set(0, 0, 0);
+    world.position.set(0, 0, 0);
 });
 
 
@@ -764,13 +791,13 @@ function updateCameraFP(dt) {
         const lookAtTarget = new THREE.Vector3(0, tableTop.position.y + 0.1, 0);
         camera.lookAt(lookAtTarget);
 
-        // Reposicionar marcador delante del jugador
-        scorePlane.position.set(-2.0, tableTop.position.y + 1.2, 0);
+        // En vista previa, mantener el marcador del lado CPU (derecha)
+        scorePlane.position.set(tableSize.width/2 + 0.3, tableTop.position.y + 1.2, 0);
     } else if (isImmersive) {
         // En VR inmersivo el headset controla la cámara
         // NO tocar camera.position ni camera.lookAt
-        // Solo aseguramos marcador visible relativo a la mesa
-        scorePlane.position.set(-2.0, tableTop.position.y + 1.2, 0);
+        // Mantener el marcador en el lado CPU como en desktop/móvil
+        scorePlane.position.set(tableSize.width/2 + 0.3, tableTop.position.y + 1.2, 0);
     } else {
         // Vista normal (desktop/móvil)
         const back = THREE.MathUtils.lerp(0.35, 1.4, state.cameraBack);
@@ -800,54 +827,75 @@ function updateGrabs() {
     }
 }
 
-// VR controls: map hand movement to paddle position (both horizontal and vertical)
+// VR controls: map hand movement to paddle position and camera movement
 function updateVRControls(dt) {
     if (!renderer.xr.isPresenting || !vrControl.active) return;
     
     // Solo aplicar controles VR en modo inmersivo
     const isImmersive = renderer.xr.getSession && renderer.xr.getSession() && renderer.xr.getSession().mode === 'immersive-vr';
     if (!isImmersive) return;
-    const ref = controllerGrip1 || controller1 || controllerGrip2 || controller2;
-    if (!ref) return;
     
-    // Mapear movimiento horizontal del controlador a posición Z de la raqueta
-    let targetZ = playerPaddle.position.z;
-    const dx = ref.position.x - vrControl.originX;
-    targetZ = vrControl.originZ + dx * vrControl.gain;
+    // Obtener gamepads de ambos controladores
+    const gamepad1 = controller1 && controller1.gamepad ? controller1.gamepad : null;
+    const gamepad2 = controller2 && controller2.gamepad ? controller2.gamepad : null;
     
-    // Mapear movimiento vertical del controlador a posición Y de la raqueta
-    let targetY = playerPaddle.position.y;
-    const dy = ref.position.y - (vrControl.originY || 1.0); // altura de referencia
-    targetY = (vrControl.originY || 1.0) + dy * vrControl.gain;
-    
-    // gamepad thumbstick: usar joystick derecho para movimiento fino
-    const src = controllerGrip1 || controller1;
-    const gp = src && src.gamepad ? src.gamepad : (controller2 && controller2.gamepad ? controller2.gamepad : null);
-    if (gp && gp.axes && gp.axes.length) {
-        // Eje horizontal (movimiento Z)
-        const axZ = gp.axes[2] !== undefined ? gp.axes[2] : (gp.axes[0] || 0);
-        targetZ += axZ * 0.5;
+    // MOVIMIENTO DE CÁMARA CON JOYSTICK IZQUIERDO
+    if (gamepad1 && gamepad1.axes && gamepad1.axes.length >= 2) {
+        // Joystick izquierdo: ejes 0 (horizontal) y 1 (vertical)
+        const leftStickX = gamepad1.axes[0] || 0;
+        const leftStickY = gamepad1.axes[1] || 0;
         
-        // Eje vertical (movimiento Y) - usar el segundo joystick si está disponible
-        const axY = gp.axes[3] !== undefined ? gp.axes[3] : (gp.axes[1] || 0);
-        targetY += axY * 0.3;
+        // Mover el mundo (mesa) en dirección opuesta para simular movimiento de cámara
+        const cameraSpeed = 2.0; // Velocidad de movimiento de cámara
+        const deadzone = 0.1; // Zona muerta para evitar drift
+        
+        if (Math.abs(leftStickX) > deadzone) {
+            world.position.x -= leftStickX * cameraSpeed * dt;
+        }
+        if (Math.abs(leftStickY) > deadzone) {
+            world.position.z -= leftStickY * cameraSpeed * dt;
+        }
+        
+        // Limitar el movimiento del mundo para mantener la mesa visible
+        world.position.x = clamp(world.position.x, -3, 3);
+        world.position.z = clamp(world.position.z, -3, 3);
     }
     
-    // Aplicar movimiento suave con damping
-    const prevZ = playerPaddle.position.z;
-    const prevY = playerPaddle.position.y;
-    
-    playerPaddle.position.z = THREE.MathUtils.damp(playerPaddle.position.z, clamp(targetZ, bounds.zMin + 0.12, bounds.zMax - 0.12), 80.0, dt);
-    playerPaddle.position.y = THREE.MathUtils.damp(playerPaddle.position.y, clamp(targetY, 0.5, 1.5), 80.0, dt);
-    
-    const dz = playerPaddle.position.z - prevZ;
-    const dyVR = playerPaddle.position.y - prevY;
-    
-    // Mantener paddle vertical, con rotación basada en movimiento
-    playerPaddle.rotation.x = 0;
-    playerPaddle.rotation.z = 0;
-    const targetYaw = THREE.MathUtils.clamp(-dz * 1.0, -0.5, 0.5);
-    playerPaddle.rotation.y = THREE.MathUtils.damp(playerPaddle.rotation.y, targetYaw, 16.0, dt);
+    // CONTROL DEL PADDLE CON JOYSTICK DERECHO
+    if (gamepad1 && gamepad1.axes && gamepad1.axes.length >= 4) {
+        // Joystick derecho: ejes 2 (horizontal) y 3 (vertical)
+        const rightStickX = gamepad1.axes[2] || 0;
+        const rightStickY = gamepad1.axes[3] || 0;
+        
+        const deadzone = 0.1;
+        const paddleSpeed = 3.0;
+        
+        let targetZ = playerPaddle.position.z;
+        let targetY = playerPaddle.position.y;
+        
+        // Mover paddle con joystick derecho
+        if (Math.abs(rightStickX) > deadzone) {
+            targetZ += rightStickX * paddleSpeed * dt;
+        }
+        if (Math.abs(rightStickY) > deadzone) {
+            targetY += rightStickY * paddleSpeed * dt;
+        }
+        
+        // Aplicar movimiento suave con damping
+        const prevZ = playerPaddle.position.z;
+        const prevY = playerPaddle.position.y;
+        
+        playerPaddle.position.z = THREE.MathUtils.damp(playerPaddle.position.z, clamp(targetZ, bounds.zMin + 0.12, bounds.zMax - 0.12), 80.0, dt);
+        playerPaddle.position.y = THREE.MathUtils.damp(playerPaddle.position.y, clamp(targetY, 0.5, 1.5), 80.0, dt);
+        
+        const dz = playerPaddle.position.z - prevZ;
+        
+        // Mantener paddle vertical, con rotación basada en movimiento
+        playerPaddle.rotation.x = 0;
+        playerPaddle.rotation.z = 0;
+        const targetYaw = THREE.MathUtils.clamp(-dz * 1.0, -0.5, 0.5);
+        playerPaddle.rotation.y = THREE.MathUtils.damp(playerPaddle.rotation.y, targetYaw, 16.0, dt);
+    }
 }
 
 // Animate

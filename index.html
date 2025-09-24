@@ -166,7 +166,10 @@
         <div class="row desktop-controls">Flechas: ↑/↓ (arriba/abajo), ←/→ (izquierda/derecha)</div>
         <div class="row desktop-controls">Mouse: mover verticalmente</div>
         <div class="row mobile-controls" style="display: none;">Toca la pantalla para mover la raqueta</div>
-        <div class="row">VR: usa el botón VR, los objetos son agarrables</div>
+        <div class="row vr-controls" style="display: none;"><strong>VR Inmersivo:</strong></div>
+        <div class="row vr-controls" style="display: none;">Joystick Izquierdo: mover cámara</div>
+        <div class="row vr-controls" style="display: none;">Joystick Derecho: controlar paddle</div>
+        <div class="row vr-controls" style="display: none;">Gatillo: agarrar objetos</div>
         <div class="row desktop-controls">Click: pausar/reanudar</div>
     </div>
     
@@ -215,16 +218,54 @@
                    (navigator.maxTouchPoints > 0);
         }
         
+        // Función para actualizar controles según el modo
+        function updateControlsDisplay() {
+            const desktopControls = document.querySelectorAll('.desktop-controls');
+            const mobileControls = document.querySelector('.mobile-controls');
+            const vrControls = document.querySelectorAll('.vr-controls');
+            
+            // Ocultar todos primero
+            desktopControls.forEach(el => el.style.display = 'none');
+            mobileControls.style.display = 'none';
+            vrControls.forEach(el => el.style.display = 'none');
+            
+            // Mostrar controles apropiados
+            if (isMobileDevice()) {
+                mobileControls.style.display = 'block';
+            } else {
+                desktopControls.forEach(el => el.style.display = 'block');
+            }
+        }
+        
+        // Función para mostrar controles VR
+        function showVRControls() {
+            const desktopControls = document.querySelectorAll('.desktop-controls');
+            const mobileControls = document.querySelector('.mobile-controls');
+            const vrControls = document.querySelectorAll('.vr-controls');
+            
+            // Ocultar otros controles
+            desktopControls.forEach(el => el.style.display = 'none');
+            mobileControls.style.display = 'none';
+            
+            // Mostrar controles VR
+            vrControls.forEach(el => el.style.display = 'block');
+        }
+        
+        // Función para ocultar controles VR
+        function hideVRControls() {
+            const vrControls = document.querySelectorAll('.vr-controls');
+            vrControls.forEach(el => el.style.display = 'none');
+            updateControlsDisplay(); // Restaurar controles normales
+        }
+        
         // Aplicar cambios cuando el DOM esté listo
         document.addEventListener('DOMContentLoaded', function() {
-            if (isMobileDevice()) {
-                // Ocultar controles de escritorio y mostrar controles móviles
-                document.querySelectorAll('.desktop-controls').forEach(el => {
-                    el.style.display = 'none';
-                });
-                document.querySelector('.mobile-controls').style.display = 'block';
-            }
+            updateControlsDisplay();
         });
+        
+        // Exponer funciones globalmente para que main.js las pueda usar
+        window.showVRControls = showVRControls;
+        window.hideVRControls = hideVRControls;
     </script>
     <script type="module" src="./src/main.js"></script>
 </body>
