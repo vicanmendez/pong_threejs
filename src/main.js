@@ -1,10 +1,14 @@
 import * as THREE from 'three';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 // Scene setup
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0b0e12);
+// scene.background = new THREE.Color(0x0b0e12); // Remove to allow skybox visibility
+
+// Set sky background
+scene.background = new THREE.Color(0x87CEEB); // Sky blue
 
 const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.01, 200);
 camera.position.set(0, 1.25, 2.6);
@@ -16,7 +20,14 @@ renderer.shadowMap.enabled = true;
 renderer.xr.enabled = true;
 renderer.xr.setReferenceSpaceType('local-floor');
 document.body.appendChild(renderer.domElement);
-document.body.appendChild(VRButton.createButton(renderer));
+const vrButton = VRButton.createButton(renderer);
+document.body.appendChild(vrButton);
+// vrButton.style.display = 'none'; // Show VR button always
+
+// Show VR controls if VR is supported
+if (document.querySelector('button[title*="VR"]')) {
+    window.showVRControls();
+}
 
 // Lights
 const hemi = new THREE.HemisphereLight(0xffffff, 0x222233, 0.7);
@@ -34,7 +45,7 @@ scene.add(world);
 
 // Floor
 const floorGeo = new THREE.PlaneGeometry(20, 20);
-const floorMat = new THREE.MeshStandardMaterial({ color: 0x0f1720, roughness: 1 });
+const floorMat = new THREE.MeshStandardMaterial({ color: 0x228B22, roughness: 1 });
 const floor = new THREE.Mesh(floorGeo, floorMat);
 floor.rotation.x = -Math.PI / 2;
 floor.receiveShadow = true;
@@ -90,13 +101,32 @@ for (const [x,z] of legOffsets) {
     table.add(leg);
 }
 
-world.add(table);
+// Add simple trees for nature environment
+function createTree(x, z) {
+    const tree = new THREE.Group();
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 2), new THREE.MeshStandardMaterial({color: 0x8B4513}));
+    trunk.position.y = 1;
+    trunk.castShadow = true;
+    const leaves = new THREE.Mesh(new THREE.SphereGeometry(0.5), new THREE.MeshStandardMaterial({color: 0x228B22}));
+    leaves.position.y = 2.5;
+    leaves.castShadow = true;
+    tree.add(trunk, leaves);
+    tree.position.set(x, 0, z);
+    return tree;
+}
+
+const tree1 = createTree(tableSize.width/2 + 2, tableSize.height/2 + 2);
+const tree2 = createTree(-tableSize.width/2 - 2, tableSize.height/2 + 2);
+const tree3 = createTree(tableSize.width/2 + 2, -tableSize.height/2 - 2);
+const tree4 = createTree(-tableSize.width/2 - 2, -tableSize.height/2 - 2);
+
+world.add(table, tree1, tree2, tree3, tree4);
 
 // Paddles (low fidelity): boxes with handle
 function createPaddle(color) {
 	const group = new THREE.Group();
-	const bladeRadius = 0.10; // ~20 cm diameter
-	const bladeThickness = 0.02;
+	const bladeRadius = 0.15; // Increased for easier grabbing in VR
+	const bladeThickness = 0.03; // Slightly thicker
 	const blade = new THREE.Mesh(
 		new THREE.CylinderGeometry(bladeRadius, bladeRadius, bladeThickness, 32),
 		new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0 })
@@ -107,8 +137,8 @@ function createPaddle(color) {
 	blade.castShadow = true;
 	blade.receiveShadow = true;
 
-	const handleLength = 0.12;
-	const handleThickness = 0.03;
+	const handleLength = 0.15; // Slightly longer
+	const handleThickness = 0.04; // Thicker
 	// handle orientado a lo largo del eje X (apuntando hacia el jugador)
 	const handle = new THREE.Mesh(
 		new THREE.BoxGeometry(handleLength, bladeThickness * 0.9, handleThickness),
@@ -177,6 +207,31 @@ scorePlane.position.set(tableSize.width/2 + 0.3, tableTop.position.y + 1.2, 0);
 // make scoreboard face camera each frame
 world.add(scorePlane);
 
+// 3D UI for VR
+function createVRText(text, position) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1024;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0,0,1024,256);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 80px system-ui';
+    ctx.textAlign = 'center';
+    const lines = text.split('\n');
+    lines.forEach((line, i) => {
+        ctx.fillText(line, 512, 80 + i * 100);
+    });
+    const texture = new THREE.CanvasTexture(canvas);
+    const plane = new THREE.Mesh(
+        new THREE.PlaneGeometry(2, 0.5),
+        new THREE.MeshBasicMaterial({map: texture, transparent: true})
+    );
+    plane.position.copy(position);
+    world.add(plane);
+    return plane;
+}
+
 // Game state
 const state = {
     running: false, // Iniciar pausado hasta configurar límite
@@ -189,6 +244,7 @@ const state = {
     paddleSpeed: 4.6,
     cpuMaxSpeed: 2.4,
     cameraBack: 1.1,
+    vrUI: null,
 };
 
 // Audio context y sonidos
@@ -212,14 +268,11 @@ function initAudio() {
         // Configurar volúmenes
         musicGain = audioContext.createGain();
         soundGain = audioContext.createGain();
-        
+
         musicGain.gain.value = 0.3; // Música a bajo volumen
         soundGain.gain.value = 0.5; // Sonidos a volumen medio
-        
-        backgroundMusic.connect(musicGain);
+
         musicGain.connect(audioContext.destination);
-        
-        ballHitSound.connect(soundGain);
         soundGain.connect(audioContext.destination);
         
     } catch (error) {
@@ -350,52 +403,65 @@ function showScoreLimitModal() {
 function startGame() {
     const modal = document.getElementById('scoreLimitModal');
     modal.classList.add('hidden');
-    
+
+    // Remove VR UI if present
+    if (state.vrUI) {
+        world.remove(state.vrUI);
+        state.vrUI = null;
+    }
+
     state.running = true;
     state.gameOver = false;
     state.scoreL = 0;
     state.scoreR = 0;
     scoreCanvas.update(state.scoreL, state.scoreR);
     resetBall(1);
-    
-    // Iniciar música de fondo
-    playBackgroundMusic();
+
 }
 
 // Mostrar modal de fin de juego
 function showGameOverModal() {
-    const modal = document.getElementById('gameOverModal');
-    const title = document.getElementById('gameOverTitle');
-    const message = document.getElementById('gameOverMessage');
-    
-    if (state.scoreL >= state.scoreLimit) {
-        title.textContent = '🎉 ¡Jugador Gana!';
-        title.style.color = '#10b981';
+    if (renderer.xr.isPresenting) {
+        // Show 3D UI in VR
+        const winner = state.scoreL >= state.scoreLimit ? 'Player Wins!' : 'CPU Wins!';
+        const scoreText = `Score: ${state.scoreL} - ${state.scoreR}`;
+        const restartText = 'Press trigger to restart';
+        state.vrUI = createVRText(`${winner}\n${scoreText}\n${restartText}`, new THREE.Vector3(0, 1.5, -1));
     } else {
-        title.textContent = '🤖 ¡CPU Gana!';
-        title.style.color = '#ef4444';
+        // Show HTML modal
+        const modal = document.getElementById('gameOverModal');
+        const title = document.getElementById('gameOverTitle');
+        const message = document.getElementById('gameOverMessage');
+        
+        if (state.scoreL >= state.scoreLimit) {
+            title.textContent = '🎉 ¡Jugador Gana!';
+            title.style.color = '#10b981';
+        } else {
+            title.textContent = '🤖 ¡CPU Gana!';
+            title.style.color = '#ef4444';
+        }
+        
+        message.textContent = `Puntuación final: ${state.scoreL} - ${state.scoreR}`;
+        modal.classList.remove('hidden');
+        
+        // Limpiar event listeners existentes
+        const playAgainBtn = document.getElementById('playAgainBtn');
+        const changeSettingsBtn = document.getElementById('changeSettingsBtn');
+        
+        playAgainBtn.replaceWith(playAgainBtn.cloneNode(true));
+        changeSettingsBtn.replaceWith(changeSettingsBtn.cloneNode(true));
+        
+        // Event listeners para botones
+        document.getElementById('playAgainBtn').addEventListener('click', () => {
+            modal.classList.add('hidden');
+            startGame();
+        });
+        
+        document.getElementById('changeSettingsBtn').addEventListener('click', () => {
+            modal.classList.add('hidden');
+            showScoreLimitModal();
+        });
     }
-    
-    message.textContent = `Puntuación final: ${state.scoreL} - ${state.scoreR}`;
-    modal.classList.remove('hidden');
-    
-    // Limpiar event listeners existentes
-    const playAgainBtn = document.getElementById('playAgainBtn');
-    const changeSettingsBtn = document.getElementById('changeSettingsBtn');
-    
-    playAgainBtn.replaceWith(playAgainBtn.cloneNode(true));
-    changeSettingsBtn.replaceWith(changeSettingsBtn.cloneNode(true));
-    
-    // Event listeners para botones
-    document.getElementById('playAgainBtn').addEventListener('click', () => {
-        modal.classList.add('hidden');
-        startGame();
-    });
-    
-    document.getElementById('changeSettingsBtn').addEventListener('click', () => {
-        modal.classList.add('hidden');
-        showScoreLimitModal();
-    });
 }
 
 // Verificar si el juego ha terminado
@@ -501,6 +567,7 @@ const controllerGrip2 = renderer.xr.getControllerGrip(1);
 controllerGrip2.add(controllerModelFactory.createControllerModel(controllerGrip2));
 scene.add(controllerGrip2);
 
+
 const tempMatrix = new THREE.Matrix4();
 const grabState = new Map(); // controller -> { object, offsetMatrix }
 const vrControl = { active: false, originX: 0, originZ: 0, gain: 1.2 };
@@ -514,15 +581,23 @@ makeGrabbable(ball);
 
 function onSelectStart() {
     const controller = this;
+    // If game over in VR, restart on trigger press
+    if (state.gameOver && renderer.xr.isPresenting) {
+        startGame();
+        return;
+    }
     const raycaster = new THREE.Raycaster();
     tempMatrix.identity().extractRotation(controller.matrixWorld);
     const direction = new THREE.Vector3(0, 0, -1).applyMatrix4(tempMatrix).normalize();
     const origin = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
     raycaster.set(origin, direction);
     const intersects = raycaster.intersectObjects([playerPaddle, cpuPaddle, ball], true);
+    console.log('Intersects:', intersects.length);
     if (intersects.length > 0) {
         const obj = intersects[0].object.parent || intersects[0].object;
+        console.log('Intersecting object:', obj, 'grabbable:', obj.userData.grabbable);
         if (obj.userData.grabbable) {
+            console.log('Grabbing object:', obj);
             const inverse = new THREE.Matrix4().copy(controller.matrixWorld).invert();
             const offsetMatrix = new THREE.Matrix4().multiplyMatrices(inverse, obj.matrixWorld);
             grabState.set(controller, { object: obj, offsetMatrix });
@@ -540,6 +615,13 @@ controller2.addEventListener('selectend', onSelectEnd);
 
 // VR session lifecycle: calibrate paddle mapping to controller movement
 renderer.xr.addEventListener('sessionstart', () => {
+    // If game not started, start it with default settings
+    if (!state.running) {
+        const modal = document.getElementById('scoreLimitModal');
+        modal.classList.add('hidden');
+        startGame();
+    }
+
     const ref = controller1 || controllerGrip1 || controller2 || controllerGrip2;
     if (ref) {
         vrControl.active = true;
@@ -547,7 +629,7 @@ renderer.xr.addEventListener('sessionstart', () => {
         vrControl.originZ = playerPaddle.position.z;
         vrControl.originY = ref.position.y;
     }
-    
+
     // Calibrar la escena para que el usuario quede detrás de su paleta (roja)
     // 1) Girar el mundo para alinear el eje X de la mesa con la dirección de mirada (-Z de la cámara)
     const rotY = -Math.PI / 2; // mantiene el lado del jugador al frente
@@ -862,10 +944,10 @@ function updateVRControls(dt) {
     }
     
     // CONTROL DEL PADDLE CON JOYSTICK DERECHO
-    if (gamepad1 && gamepad1.axes && gamepad1.axes.length >= 4) {
-        // Joystick derecho: ejes 2 (horizontal) y 3 (vertical)
-        const rightStickX = gamepad1.axes[2] || 0;
-        const rightStickY = gamepad1.axes[3] || 0;
+    if (gamepad2 && gamepad2.axes && gamepad2.axes.length >= 2) {
+        // Joystick derecho: ejes 0 (horizontal) y 1 (vertical)
+        const rightStickX = gamepad2.axes[0] || 0;
+        const rightStickY = gamepad2.axes[1] || 0;
         
         const deadzone = 0.1;
         const paddleSpeed = 3.0;
@@ -875,10 +957,10 @@ function updateVRControls(dt) {
         
         // Mover paddle con joystick derecho
         if (Math.abs(rightStickX) > deadzone) {
-            targetZ += rightStickX * paddleSpeed * dt;
+            targetZ -= rightStickX * paddleSpeed * dt;
         }
         if (Math.abs(rightStickY) > deadzone) {
-            targetY += rightStickY * paddleSpeed * dt;
+            targetY -= rightStickY * paddleSpeed * dt;
         }
         
         // Aplicar movimiento suave con damping
@@ -921,6 +1003,7 @@ renderer.setAnimationLoop(() => {
     updateCameraFP(dt);
     // billboard score to camera
     scorePlane.lookAt(camera.position);
+
 
     renderer.render(scene, camera);
 });
